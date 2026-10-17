@@ -1,24 +1,51 @@
 #!/usr/bin/env bash
 # ccs 安装脚本 (Linux/macOS)
-# 用法: curl -fsSL <raw-url>/install.sh | bash 或下载后 ./install.sh
+#
+# 方式一（推荐，无需克隆仓库）:
+#   curl -fsSL https://raw.githubusercontent.com/everdom/ccs/main/install.sh | bash
+#
+# 方式二（已克隆仓库）:
+#   ./install.sh
 set -e
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+REPO_RAW="https://raw.githubusercontent.com/everdom/ccs/main"
 INSTALL_DIR="$HOME/.local/bin"
 SHARE_DIR="$HOME/.local/share/ccs"
 
-echo "[ccs] 安装到 $INSTALL_DIR ..."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)" || SCRIPT_DIR=""
 
-mkdir -p "$INSTALL_DIR" "$SHARE_DIR"
+# 获取 ccs.py / ccs.sh 的来源目录；管道安装时自动从 GitHub 下载
+fetch_file() {
+    local name="$1"
+    if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/$name" ]; then
+        echo "$SCRIPT_DIR/$name"
+    else
+        local tmp
+        tmp="$(mktemp)"
+        echo "[ccs] 从 GitHub 下载 $name ..."
+        if command -v curl >/dev/null 2>&1; then
+            curl -fsSL "$REPO_RAW/$name" -o "$tmp" || { rm -f "$tmp"; exit 1; }
+        elif command -v wget >/dev/null 2>&1; then
+            wget -qO "$tmp" "$REPO_RAW/$name" || { rm -f "$tmp"; exit 1; }
+        else
+            echo "[ccs] 错误: 需要 curl 或 wget" >&2
+            exit 1
+        fi
+        echo "$tmp"
+    fi
+}
+
+echo "[ccs] 安装到 $INSTALL_DIR ..."
 
 if ! command -v python3 >/dev/null 2>&1; then
     echo "[ccs] 错误: 未找到 python3，请先安装 Python 3.8+" >&2
     exit 1
 fi
 
-cp "$PROJECT_DIR/ccs.py" "$SHARE_DIR/ccs.py"
-cp "$PROJECT_DIR/ccs.sh" "$SHARE_DIR/ccs.sh"
-chmod +x "$SHARE_DIR/ccs.sh"
+mkdir -p "$INSTALL_DIR" "$SHARE_DIR"
+
+PY_SRC="$(fetch_file ccs.py)"
+cp "$PY_SRC" "$SHARE_DIR/ccs.py"
 
 # 入口脚本指向共享安装位置
 cat > "$INSTALL_DIR/ccs" <<EOF
