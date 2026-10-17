@@ -106,13 +106,15 @@ def pick_interactive(providers):
         if state["index"] < len(state["filtered"]) - 1:
             state["index"] += 1
 
-    @kb.add("enter")
+    # eager=True: 抢在内置 emacs 绑定（单行 buffer 有文本时 enter=accept 输入，
+    # 会清空过滤框导致菜单重置、永不退出）之前处理按键
+    @kb.add("enter", eager=True)
     def _(event):
         if state["filtered"]:
             event.app.exit(result=state["filtered"][state["index"]]["name"])
 
-    @kb.add("escape")
-    @kb.add("c-c")
+    @kb.add("escape", eager=True)
+    @kb.add("c-c", eager=True)
     def _(event):
         event.app.exit(result=None)
 
@@ -129,7 +131,7 @@ def pick_interactive(providers):
     def buffer_changed(_buffer):
         query = buffer.text
         state["filtered"] = [p for p in providers if matches(p, query)]
-        state["index"] = min(state["index"], max(len(state["filtered"]) - 1, 0))
+        state["index"] = 0
 
     buffer = Buffer(on_text_changed=buffer_changed, multiline=False)
 
@@ -288,9 +290,10 @@ def main():
             sys.exit(f"未找到匹配 '{target}' 的配置。用 ccs --list 查看所有配置。")
         else:
             print(f"多个配置匹配 '{target}'，请选择:")
-            provider = next(
-                (p for p in providers if p["name"] == pick_interactive_safe(hits)), None
-            )
+            # 注意：选择器只调用一次！原先写在生成器条件里，next() 每跳过一个
+            # 不匹配的配置就会重新弹出一次菜单（选择项排第 N 位就弹 N 次）。
+            picked = pick_interactive_safe(hits)
+            provider = next((p for p in providers if p["name"] == picked), None)
     else:
         name = pick_interactive_safe(providers)
         provider = next((p for p in providers if p["name"] == name), None)
