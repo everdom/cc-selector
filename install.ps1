@@ -1,4 +1,4 @@
-# ccs 安装脚本 (Windows)
+﻿# ccs 安装脚本 (Windows)
 # 用法: 以普通用户运行  powershell -ExecutionPolicy Bypass -File install.ps1
 $ErrorActionPreference = "Stop"
 
