@@ -2,7 +2,7 @@
 # ccs 安装脚本 (Linux/macOS)
 #
 # 方式一（推荐，无需克隆仓库）:
-#   curl -fsSL https://raw.githubusercontent.com/everdom/ccs/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/everdom/cc-selector/main/install.sh | bash
 #
 # 方式二（已克隆仓库）:
 #   ./install.sh
@@ -10,7 +10,7 @@
 # 安装后可用 ccs --update 自我更新。
 set -e
 
-REPO_RAW="https://raw.githubusercontent.com/everdom/ccs/main"
+REPO_RAW="https://raw.githubusercontent.com/everdom/cc-selector/main"
 INSTALL_DIR="$HOME/.local/bin"
 SHARE_DIR="$HOME/.local/share/ccs"
 

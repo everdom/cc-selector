@@ -26,7 +26,7 @@ cc-selector 换了一种方式：**不动全局配置**。它把选中的配置�
 **Linux / macOS 一键安装（推荐，无需克隆仓库）:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/everdom/ccs/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/everdom/cc-selector/main/install.sh | bash
 ```
 
 **Windows (PowerShell):**
@@ -38,7 +38,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 **Linux / macOS（已克隆仓库）:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/everdom/ccs/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/everdom/cc-selector/main/install.sh | bash
 ```
 
 安装后重新打开终端即可。依赖：Python 3.8+（`prompt_toolkit` 由安装脚本自动装）。

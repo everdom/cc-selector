@@ -20,8 +20,8 @@ __version__ = "1.0.0"
 
 CC_SWITCH_DB = Path.home() / ".cc-switch" / "cc-switch.db"
 CONFIG_FILE = Path.home() / ".ccs" / "config.json"
-CCS_RAW_URL = "https://raw.githubusercontent.com/everdom/ccs/main/ccs.py"
-CCS_TARBALL_URL = "https://codeload.github.com/everdom/ccs/tar.gz/refs/heads/main"
+CCS_RAW_URL = "https://raw.githubusercontent.com/everdom/cc-selector/main/ccs.py"
+CCS_TARBALL_URL = "https://codeload.github.com/everdom/cc-selector/tar.gz/refs/heads/main"
 APP_TYPE = "claude"
 
 # 权限模式 -> 传给 claude 的参数
@@ -368,7 +368,7 @@ def fetch_remote_ccs():
 
     for url, headers in [
         (
-            "https://api.github.com/repos/everdom/ccs/contents/ccs.py",
+            "https://api.github.com/repos/everdom/cc-selector/contents/ccs.py",
             {**ua, "Accept": "application/vnd.github.raw+json"},
         ),
         (CCS_RAW_URL, ua),
