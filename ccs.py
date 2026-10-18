@@ -21,6 +21,7 @@ __version__ = "1.0.0"
 CC_SWITCH_DB = Path.home() / ".cc-switch" / "cc-switch.db"
 CONFIG_FILE = Path.home() / ".ccs" / "config.json"
 CCS_RAW_URL = "https://raw.githubusercontent.com/everdom/ccs/main/ccs.py"
+CCS_TARBALL_URL = "https://codeload.github.com/everdom/ccs/tar.gz/refs/heads/main"
 APP_TYPE = "claude"
 
 # 权限模式 -> 传给 claude 的参数
@@ -340,6 +341,47 @@ def parse_version(text):
     return m.group(1) if m else None
 
 
+def fetch_remote_ccs():
+    """下载 GitHub 上最新的 ccs.py。
+
+    优先 codeload tarball: 无 CDN 缓存（raw 有数分钟缓存）、无 API 限流
+    （匿名 60 次/小时）。失败时依次退回 GitHub API contents 和 raw 地址。
+    """
+    import io
+    import tarfile
+    import urllib.request
+
+    ua = {"User-Agent": "ccs-updater"}
+    last_err = None
+
+    try:
+        req = urllib.request.Request(CCS_TARBALL_URL, headers=ua)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            blob = resp.read()
+        with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as tf:
+            for member in tf.getmembers():
+                if member.isfile() and member.name.endswith("/ccs.py"):
+                    return tf.extractfile(member).read()
+        last_err = OSError("tarball 中未找到 ccs.py")
+    except (OSError, tarfile.TarError) as e:
+        last_err = e
+
+    for url, headers in [
+        (
+            "https://api.github.com/repos/everdom/ccs/contents/ccs.py",
+            {**ua, "Accept": "application/vnd.github.raw+json"},
+        ),
+        (CCS_RAW_URL, ua),
+    ]:
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                return resp.read()
+        except OSError as e:
+            last_err = e
+    raise last_err if last_err else OSError("下载失败")
+
+
 def cmd_update():
     """ccs --update: 从 GitHub 拉取最新 ccs.py 覆盖当前安装的文件。"""
     here = Path(__file__).resolve()
@@ -351,13 +393,7 @@ def cmd_update():
 
     print("[ccs] 检查更新 ...")
     try:
-        import urllib.request
-
-        req = urllib.request.Request(
-            CCS_RAW_URL, headers={"User-Agent": "ccs-updater"}
-        )
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            data = resp.read()
+        data = fetch_remote_ccs()
     except OSError as e:
         sys.exit(f"[ccs] 下载失败: {e}")
 
@@ -369,7 +405,10 @@ def cmd_update():
 
     remote_ver = parse_version(text)
     if remote_ver is None:
-        sys.exit("[ccs] 下载的文件缺少版本信息，放弃更新。")
+        sys.exit(
+            "[ccs] 下载的文件缺少版本信息，放弃更新。\n"
+            "若刚发布新版本，可能是 GitHub CDN 缓存延迟，请几分钟后重试。"
+        )
 
     local_ver = __version__
     if remote_ver == local_ver:
