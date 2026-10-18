@@ -1,8 +1,25 @@
-# ccs
+# cc-selector (ccs)
 
-用 [cc-switch](https://github.com/farion1231/cc-switch) 中的配置启动 Claude Code —— 随时用不同配置，且可多个并行。
+**一个 Claude Code 多配置启动器** —— 从 [cc-switch](https://github.com/farion1231/cc-switch) 读取所有供应商配置，按需选择启动，不同配置可**同时并行**运行，随时在不同模型/供应商之间切换。
 
-cc-switch 切换后全局只生效一个配置；`ccs` 读取 cc-switch 数据库，把选中的配置写到临时 settings 文件后以 `claude --settings <临时文件>` 启动，**不改全局 `~/.claude/settings.json`**，因此不同配置的 Claude Code 可以同时运行。
+## 为什么需要它
+
+cc-switch 通过改写全局 `~/.claude/settings.json` 来切换配置，切换后只有一个配置生效。如果你正在用一个配置跑任务，想同时用另一个模型开个新会话，就得来回切换。
+
+cc-selector 换了一种方式：**不动全局配置**。它把选中的配置写到临时 settings 文件，以 `claude --settings <临时文件>` 启动，因此：
+
+- ✅ 多个不同配置的 Claude Code **同时运行**，互不干扰
+- ✅ cc-switch 本身继续正常使用，两边互不影响
+- ✅ 内置权限模式选择（yolo / plan / acceptEdits），不用手写参数
+
+## 特性
+
+- 🔍 **模糊搜索选择**：输入即过滤，↑↓ 选择（缺 prompt_toolkit 时降级为编号列表）
+- 🚀 **权限模式**：`-m yolo` / `-m plan` / `-m acceptEdits`，支持缩写 `d/a/p/y`
+- ⭐ **默认模式**：`--set-default-mode` 设一次，以后免选
+- 📦 **参数透传**：`--` 之后的参数原样传给 claude（`ccs glm -- --resume`）
+- 🖥️ **跨平台**：Windows / Linux / macOS
+- 🔌 **多 app**：也可查看 codex / gemini / opencode 的配置（`-a`）
 
 ## 安装
 
@@ -21,10 +38,10 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 **Linux / macOS（已克隆仓库）:**
 
 ```bash
-chmod +x install.sh && ./install.sh
+curl -fsSL https://raw.githubusercontent.com/everdom/ccs/main/install.sh | bash
 ```
 
-安装后重新打开终端即可。依赖：Python 3.8+（`prompt_toolkit` 由安装脚本自动装，缺失时交互界面降级为编号列表）。
+安装后重新打开终端即可。依赖：Python 3.8+（`prompt_toolkit` 由安装脚本自动装）。
 
 ## 更新
 
@@ -41,9 +58,9 @@ git 克隆安装的会提示改用 `git pull`。
 
 ```bash
 ccs                                  # 交互选择配置和权限模式
-ccs deepseek                         # 用名称匹配的配置启动
+ccs deepseek                         # 用名称匹配的配置启动（支持模糊匹配）
 ccs deepseek -m yolo                 # yolo = --dangerously-skip-permissions
-ccs -m p                             # 交互选配置，plan 模式（缩写 d/a/p/y）
+ccs -m p                             # 交互选配置，plan 模式
 ccs deepseek -- --resume             # -- 后的参数原样传给 claude
 ccs --list                           # 列出所有配置（* 为 cc-switch 当前项）
 ccs --set-default-mode yolo          # 设置默认权限模式（免每次选）
@@ -51,6 +68,7 @@ ccs --default-mode                   # 查看当前默认模式
 ccs --update                         # 更新 ccs 自身到 GitHub 最新版
 ccs --version                        # 查看当前版本
 ccs -a codex --list                  # 查看其他 app 类型的配置
+ccs --help                           # 完整帮助
 ```
 
 权限模式对应 Claude Code 权限模式：
