@@ -8,6 +8,7 @@
 
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -15,8 +16,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+__version__ = "1.0.0"
+
 CC_SWITCH_DB = Path.home() / ".cc-switch" / "cc-switch.db"
 CONFIG_FILE = Path.home() / ".ccs" / "config.json"
+CCS_RAW_URL = "https://raw.githubusercontent.com/everdom/ccs/main/ccs.py"
 APP_TYPE = "claude"
 
 # 权限模式 -> 传给 claude 的参数
@@ -56,6 +60,10 @@ def help_text():
 配置管理:
   ccs --set-default-mode yolo      设置默认权限模式（写 ~/.ccs/config.json）
   ccs --default-mode               查看当前默认模式
+
+自身维护:
+  ccs --update                     从 GitHub 更新 ccs 到最新版
+  ccs --version                    查看当前版本
 
 示例:
   ccs                              交互选择配置和模式
@@ -326,6 +334,56 @@ def find_executable(name):
     return shutil.which(name + ".ps1") if os.name == "nt" else None
 
 
+def parse_version(text):
+    """从 ccs.py 源码中提取 __version__；缺失返回 None。"""
+    m = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', text, re.M)
+    return m.group(1) if m else None
+
+
+def cmd_update():
+    """ccs --update: 从 GitHub 拉取最新 ccs.py 覆盖当前安装的文件。"""
+    here = Path(__file__).resolve()
+    if (here.parent / ".git").exists():
+        sys.exit(
+            "当前 ccs.py 位于 git 仓库中，请用 git pull 更新:\n"
+            f"  cd {here.parent} && git pull"
+        )
+
+    print("[ccs] 检查更新 ...")
+    try:
+        import urllib.request
+
+        req = urllib.request.Request(
+            CCS_RAW_URL, headers={"User-Agent": "ccs-updater"}
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = resp.read()
+    except OSError as e:
+        sys.exit(f"[ccs] 下载失败: {e}")
+
+    text = data.decode("utf-8")
+    try:
+        compile(text, "ccs.py", "exec")
+    except SyntaxError as e:
+        sys.exit(f"[ccs] 下载的文件语法异常，放弃更新: {e}")
+
+    remote_ver = parse_version(text)
+    if remote_ver is None:
+        sys.exit("[ccs] 下载的文件缺少版本信息，放弃更新。")
+
+    local_ver = __version__
+    if remote_ver == local_ver:
+        print(f"[ccs] 已是最新版本: {local_ver}")
+        return
+
+    # 先写临时文件再原子替换，保证中断后不会留下半截文件
+    tmp = here.with_name(here.name + ".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, here)
+    print(f"[ccs] 已更新: {local_ver} -> {remote_ver}  ({here})")
+    print("[ccs] 重新运行 ccs 即可使用新版本。")
+
+
 def launch(provider, extra_args, app_type, mode_args):
     settings = dict(provider["settings"])
 
@@ -365,6 +423,13 @@ def main():
 
     if "-h" in argv or "--help" in argv:
         print(help_text())
+        return
+
+    if "--update" in argv or "update" in argv:
+        cmd_update()
+        return
+    if "--version" in argv:
+        print(__version__)
         return
 
     cfg = load_config()

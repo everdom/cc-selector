@@ -6,19 +6,36 @@ cc-switch 切换后全局只生效一个配置；`ccs` 读取 cc-switch 数据�
 
 ## 安装
 
+**Linux / macOS 一键安装（推荐，无需克隆仓库）:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/everdom/ccs/main/install.sh | bash
+```
+
 **Windows (PowerShell):**
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
-**Linux / macOS:**
+**Linux / macOS（已克隆仓库）:**
 
 ```bash
 chmod +x install.sh && ./install.sh
 ```
 
 安装后重新打开终端即可。依赖：Python 3.8+（`prompt_toolkit` 由安装脚本自动装，缺失时交互界面降级为编号列表）。
+
+## 更新
+
+一键安装/脚本安装的 ccs 可自我更新到 GitHub 最新版:
+
+```bash
+ccs --update        # 从 GitHub 拉取最新版并覆盖
+ccs --version       # 查看当前版本
+```
+
+git 克隆安装的会提示改用 `git pull`。
 
 ## 用法
 
@@ -31,6 +48,8 @@ ccs deepseek -- --resume             # -- 后的参数原样传给 claude
 ccs --list                           # 列出所有配置（* 为 cc-switch 当前项）
 ccs --set-default-mode yolo          # 设置默认权限模式（免每次选）
 ccs --default-mode                   # 查看当前默认模式
+ccs --update                         # 更新 ccs 自身到 GitHub 最新版
+ccs --version                        # 查看当前版本
 ccs -a codex --list                  # 查看其他 app 类型的配置
 ```
 
