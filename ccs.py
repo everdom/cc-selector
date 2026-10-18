@@ -16,7 +16,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 CC_SWITCH_DB = Path.home() / ".cc-switch" / "cc-switch.db"
 CONFIG_FILE = Path.home() / ".ccs" / "config.json"
@@ -525,6 +525,12 @@ def main():
     target = argv[0] if argv else None
     provider = None
     if target:
+        # 以 - 开头的参数不作为配置名：要么是 ccs 自己的选项，要么打错了，
+        # 都不该被当成配置去模糊匹配
+        if target.startswith("-"):
+            print(f"未知选项 '{target}'。\n")
+            print(help_text())
+            sys.exit(1)
         hits = [p for p in providers if target.lower() == p["name"].lower()]
         if not hits:
             hits = [p for p in providers if target.lower() in p["name"].lower()]
