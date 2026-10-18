@@ -4,19 +4,6 @@
 从 cc-switch 数据库 (~/.cc-switch/cc-switch.db) 读取供应商配置，
 交互式选择后以 `claude --settings <临时文件>` 启动，
 不修改全局 ~/.claude/settings.json，因此不同配置可同时并行运行。
-
-用法:
-  ccs                     # 交互式选择（模糊搜索 + 上下键）
-  ccs <名称> [参数...]    # 用名称匹配的配置启动，其余参数传给 claude
-  ccs --                  # 之后的参数全部传给 claude
-  ccs --list              # 仅列出所有配置
-  ccs -a codex            # 指定 app 类型 (claude/codex/gemini/opencode)
-
-示例:
-  ccs deepseek -- --dangerously-skip-permissions
-  ccs -- --resume --continue
-
-跨平台: Windows 用 ccs.cmd，Linux/macOS 把 ccs.sh 加入 PATH。
 """
 
 import json
@@ -29,7 +16,138 @@ import tempfile
 from pathlib import Path
 
 CC_SWITCH_DB = Path.home() / ".cc-switch" / "cc-switch.db"
+CONFIG_FILE = Path.home() / ".ccs" / "config.json"
 APP_TYPE = "claude"
+
+# 权限模式 -> 传给 claude 的参数
+PERMISSION_MODES = {
+    "default": [],
+    "acceptEdits": ["--permission-mode", "acceptEdits"],
+    "plan": ["--permission-mode", "plan"],
+    "yolo": ["--dangerously-skip-permissions"],
+}
+MODE_ALIASES = {
+    "d": "default", "default": "default",
+    "a": "acceptEdits", "accept": "acceptEdits", "acceptEdits": "acceptEdits",
+    "p": "plan", "plan": "plan",
+    "y": "yolo", "yolo": "yolo",
+}
+
+
+def help_text():
+    return """ccs - 用 cc-switch 中的配置启动 Claude Code（可多配置并行）
+
+用法:
+  ccs [选项] [配置名] [-- claude参数...]
+
+选项:
+  -m, --mode <模式>   权限模式: default | acceptEdits | plan | yolo
+                      (缩写: d / a / p / y)
+  -l, --list          列出所有配置后退出
+  -a, --app <类型>    app 类型: claude(默认) | codex | gemini | opencode
+  -h, --help          显示本帮助
+
+模式说明（对应 Claude Code 权限模式）:
+  default      每次操作都询问
+  acceptEdits  自动接受文件编辑 (a)
+  plan         只读规划模式 (p)
+  yolo         跳过所有权限确认 = --dangerously-skip-permissions (y)
+
+配置管理:
+  ccs --set-default-mode yolo      设置默认权限模式（写 ~/.ccs/config.json）
+  ccs --default-mode               查看当前默认模式
+
+示例:
+  ccs                              交互选择配置和模式
+  ccs deepseek                     用 deepseek 配置启动
+  ccs deepseek -m yolo             用 deepseek + yolo 模式
+  ccs -m plan                      交互选配置，plan 模式
+  ccs glm -- --resume              glm 配置，其余参数原样传给 claude
+
+临时指定一次的模式优先于默认模式；不指定时用默认模式（初始为 default）。
+配置名支持模糊匹配，多个匹配时弹出选择菜单。
+"""
+
+
+def load_config():
+    try:
+        return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_config(cfg):
+    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text(
+        json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def resolve_mode(argv):
+    """返回 (mode, 剩余argv, 是否显式指定)。别名归一化，非法则退出。"""
+    mode = None
+    rest = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("-m", "--mode"):
+            if i + 1 >= len(argv):
+                sys.exit(f"{a} 需要一个模式参数: default|acceptEdits|plan|yolo")
+            mode = argv[i + 1]
+            i += 2
+        elif a.startswith("--mode="):
+            mode = a.split("=", 1)[1]
+            i += 1
+        else:
+            rest.append(a)
+            i += 1
+    if mode is not None:
+        m = MODE_ALIASES.get(mode.lower())
+        if m is None:
+            sys.exit(
+                f"未知模式 '{mode}'。可选: default | acceptEdits | plan | yolo"
+                "（缩写 d / a / p / y）"
+            )
+        return m, rest, True
+    return None, rest, False
+
+
+def pick_mode_interactive(default_mode):
+    """交互式选权限模式。prompt_toolkit 可用则带 UI，否则编号输入。"""
+    modes = list(PERMISSION_MODES.keys())
+    desc = {
+        "default": "每次操作都询问",
+        "acceptEdits": "自动接受文件编辑",
+        "plan": "只读规划模式",
+        "yolo": "跳过所有权限确认 (--dangerously-skip-permissions)",
+    }
+    try:
+        from prompt_toolkit.shortcuts import radiolist_dialog
+
+        result = radiolist_dialog(
+            title="权限模式",
+            text="选择权限模式（回车确认，Esc 取消）:",
+            values=[(m, f"{m}  -  {desc[m]}" + ("  [默认]" if m == default_mode else ""))
+                    for m in modes],
+            default=default_mode,
+        ).run()
+        return result
+    except Exception:
+        pass
+
+    print("\n权限模式:")
+    for i, m in enumerate(modes, 1):
+        mark = " [默认]" if m == default_mode else ""
+        print(f"  {i}. {m:<12} {desc[m]}{mark}")
+    try:
+        raw = input(f"选择 [1-{len(modes)}，回车=default]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return None
+    if not raw:
+        return "default"
+    if raw.isdigit() and 1 <= int(raw) <= len(modes):
+        return modes[int(raw) - 1]
+    return MODE_ALIASES.get(raw)
 
 
 def load_providers(app_type=APP_TYPE):
@@ -135,8 +253,6 @@ def pick_interactive(providers):
 
     buffer = Buffer(on_text_changed=buffer_changed, multiline=False)
 
-    from prompt_toolkit.layout.containers import VSplit
-
     layout = Layout(
         HSplit(
             [
@@ -150,8 +266,6 @@ def pick_interactive(providers):
             ]
         )
     )
-
-    from prompt_toolkit.styles import Style
 
     app = Application(
         layout=layout,
@@ -212,7 +326,7 @@ def find_executable(name):
     return shutil.which(name + ".ps1") if os.name == "nt" else None
 
 
-def launch(provider, extra_args, app_type):
+def launch(provider, extra_args, app_type, mode_args):
     settings = dict(provider["settings"])
 
     # 同步把 env 段写入进程环境，保证最可靠（--settings 之外双保险）
@@ -228,12 +342,14 @@ def launch(provider, extra_args, app_type):
         json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    base = find_executable(LAUNCH_COMMANDS.get(app_type, ["claude"])[0])
+    cmd_name = LAUNCH_COMMANDS.get(app_type, ["claude"])[0]
+    base = find_executable(cmd_name)
     if not base:
-        sys.exit(f"找不到可执行文件 '{LAUNCH_COMMANDS.get(app_type, ['claude'])[0]}'")
+        sys.exit(f"找不到可执行文件 '{cmd_name}'")
 
-    cmd = [base, "--settings", str(tmp_path)] + extra_args
-    print(f"[ccs] 使用配置: {provider['name']}")
+    cmd = [base, "--settings", str(tmp_path)] + mode_args + extra_args
+    mode_label = "default" if not mode_args else "自定义"
+    print(f"[ccs] 配置: {provider['name']}  模式: {mode_label}")
     try:
         proc = subprocess.run(cmd, env=env)
     finally:
@@ -247,25 +363,49 @@ def launch(provider, extra_args, app_type):
 def main():
     argv = sys.argv[1:]
 
-    list_only = "--list" in argv
-    args = [a for a in argv if a != "--list"]
+    if "-h" in argv or "--help" in argv:
+        print(help_text())
+        return
 
-    # ccs 自身参数: ccs [-a app] [配置名] [claude 参数...]
-    # 用 -- 显式分隔 claude 参数: ccs 配置名 -- --dangerously-skip-permissions
-    if "--" in args:
-        sep = args.index("--")
-        extra = args[sep + 1:]
-        args = args[:sep]
+    cfg = load_config()
+    default_mode = cfg.get("default_mode", "default")
+
+    # --set-default-mode / --default-mode
+    if "--set-default-mode" in argv:
+        i = argv.index("--set-default-mode")
+        if i + 1 >= len(argv):
+            sys.exit("用法: ccs --set-default-mode <default|acceptEdits|plan|yolo>")
+        m = MODE_ALIASES.get(argv[i + 1].lower())
+        if m is None:
+            sys.exit(f"未知模式 '{argv[i + 1]}'。可选: default | acceptEdits | plan | yolo")
+        cfg["default_mode"] = m
+        save_config(cfg)
+        print(f"[ccs] 默认模式已设为: {m}  (写入 {CONFIG_FILE})")
+        return
+    if "--default-mode" in argv:
+        print(default_mode)
+        return
+
+    list_only = "-l" in argv or "--list" in argv
+    argv = [a for a in argv if a not in ("-l", "--list")]
+
+    mode, argv, explicit = resolve_mode(argv)
+
+    # ccs 自身参数: ccs [-a app] [配置名] [-- claude参数...]
+    if "--" in argv:
+        sep = argv.index("--")
+        extra = argv[sep + 1:]
+        argv = argv[:sep]
     else:
         extra = []
 
     app_type = "claude"
-    if "-a" in args or "--app" in args:
-        flag = "-a" if "-a" in args else "--app"
-        i = args.index(flag)
+    if "-a" in argv or "--app" in argv:
+        flag = "-a" if "-a" in argv else "--app"
+        i = argv.index(flag)
         try:
-            app_type = args[i + 1]
-            args = args[:i] + args[i + 2:]
+            app_type = argv[i + 1]
+            argv = argv[:i] + argv[i + 2:]
         except IndexError:
             sys.exit(f"{flag} 需要一个参数，如 ccs -a claude")
 
@@ -278,7 +418,7 @@ def main():
             print(f"{'*' if p['current'] else ' '} {p['name']}")
         return
 
-    target = args[0] if args else None
+    target = argv[0] if argv else None
     provider = None
     if target:
         hits = [p for p in providers if target.lower() == p["name"].lower()]
@@ -302,7 +442,14 @@ def main():
         print("已取消。")
         return
 
-    launch(provider, extra, app_type)
+    # 模式: 显式指定 > 默认配置；claude 之外的 app 不注入模式参数
+    if explicit:
+        chosen = mode
+    else:
+        chosen = default_mode if default_mode in PERMISSION_MODES else "default"
+    mode_args = PERMISSION_MODES.get(chosen, []) if app_type == "claude" else []
+
+    launch(provider, extra, app_type, mode_args)
 
 
 if __name__ == "__main__":

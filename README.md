@@ -23,14 +23,27 @@ chmod +x install.sh && ./install.sh
 ## 用法
 
 ```bash
-ccs                                  # 交互式选择（模糊搜索 + ↑↓ 选择）
-ccs deepseek                         # 直接用名称匹配的配置启动
-ccs deepseek -- --dangerously-skip-permissions   # -- 后的参数原样传给 claude
+ccs                                  # 交互选择配置和权限模式
+ccs deepseek                         # 用名称匹配的配置启动
+ccs deepseek -m yolo                 # yolo = --dangerously-skip-permissions
+ccs -m p                             # 交互选配置，plan 模式（缩写 d/a/p/y）
+ccs deepseek -- --resume             # -- 后的参数原样传给 claude
 ccs --list                           # 列出所有配置（* 为 cc-switch 当前项）
+ccs --set-default-mode yolo          # 设置默认权限模式（免每次选）
+ccs --default-mode                   # 查看当前默认模式
 ccs -a codex --list                  # 查看其他 app 类型的配置
 ```
 
-`--` 之前是 ccs 自己的参数（配置名、`-a`、`--list`），`--` 之后全部原样传给 claude。
+权限模式对应 Claude Code 权限模式：
+
+| 模式 | 缩写 | 说明 |
+|---|---|---|
+| `default` | d | 每次操作都询问 |
+| `acceptEdits` | a | 自动接受文件编辑 |
+| `plan` | p | 只读规划模式 |
+| `yolo` | y | `--dangerously-skip-permissions` |
+
+模式优先级：`-m` 临时指定 > 默认模式（初始 default）。`--` 之后全部原样传给 claude。
 
 ## 工作原理
 
