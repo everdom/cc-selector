@@ -56,15 +56,14 @@ Copy-Item $cmdSrc "$InstallDir\ccs.cmd" -Force
 if ($cmdSrc -like "$env:TEMP*") { Remove-Item $cmdSrc -Force }
 
 # 确保 prompt_toolkit 可用（缺失时交互界面降级，但建议安装）。
-# 注意: pip show 查不到包时会向 stderr 输出 WARNING 并返回非零，
-# 在 $ErrorActionPreference = "Stop" 下会变成终止错误，故这里临时放宽。
-$ErrorActionPreference = "Continue"
-python -m pip show prompt_toolkit *>$null
+# 用 cmd 重定向检查: pip show 查不到包时输出的 stderr WARNING 在
+# PowerShell 5.1 + $ErrorActionPreference=Stop 下会变成终止错误，
+# 无论怎么调 EAP 都不可靠，干脆交给 cmd 完全吞掉。
+cmd /c "python -m pip show prompt_toolkit >nul 2>&1"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[ccs] 安装 prompt_toolkit ..."
-    python -m pip install prompt_toolkit
+    cmd /c "python -m pip install prompt_toolkit"
 }
-$ErrorActionPreference = "Stop"
 
 # 加入用户 PATH（已存在则跳过）
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
