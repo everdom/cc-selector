@@ -198,7 +198,11 @@ def pick_interactive(providers):
     except ImportError:
         return pick_simple(providers)
 
-    state = {"index": 0, "filtered": list(providers)}
+    # 光标初始停在 cc-switch 正在使用的配置上
+    cur_index = next(
+        (i for i, p in enumerate(providers) if p["current"]), 0
+    )
+    state = {"index": cur_index, "filtered": list(providers)}
 
     def matches(p, query):
         if not query:

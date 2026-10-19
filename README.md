@@ -29,7 +29,13 @@ cc-selector 换了一种方式：**不动全局配置**。它把选中的配置�
 curl -fsSL https://raw.githubusercontent.com/everdom/cc-selector/main/install.sh | bash
 ```
 
-**Windows (PowerShell):**
+**Windows (PowerShell 一键安装，推荐，无需克隆仓库):**
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/everdom/cc-selector/main/install.ps1 | iex"
+```
+
+**Windows (已克隆仓库):**
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File install.ps1
