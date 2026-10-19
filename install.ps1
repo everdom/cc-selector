@@ -55,12 +55,16 @@ $cmdSrc = Get-SourceFile "ccs.cmd"
 Copy-Item $cmdSrc "$InstallDir\ccs.cmd" -Force
 if ($cmdSrc -like "$env:TEMP*") { Remove-Item $cmdSrc -Force }
 
-# 确保 prompt_toolkit 可用（缺失时交互界面降级，但建议安装）
+# 确保 prompt_toolkit 可用（缺失时交互界面降级，但建议安装）。
+# 注意: pip show 查不到包时会向 stderr 输出 WARNING 并返回非零，
+# 在 $ErrorActionPreference = "Stop" 下会变成终止错误，故这里临时放宽。
+$ErrorActionPreference = "Continue"
 python -m pip show prompt_toolkit *>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[ccs] 安装 prompt_toolkit ..."
     python -m pip install prompt_toolkit
 }
+$ErrorActionPreference = "Stop"
 
 # 加入用户 PATH（已存在则跳过）
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
