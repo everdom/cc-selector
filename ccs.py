@@ -16,7 +16,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 CC_SWITCH_DB = Path.home() / ".cc-switch" / "cc-switch.db"
 CONFIG_FILE = Path.home() / ".ccs" / "config.json"
