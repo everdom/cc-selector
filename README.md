@@ -42,6 +42,12 @@ curl -fsSL https://raw.githubusercontent.com/everdom/cc-selector/main/install.sh
 powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/everdom/cc-selector/main/install.ps1 | iex"
 ```
 
+> `raw.githubusercontent.com` 带 5 分钟的 CDN 缓存，刚发布的新版本要过几分钟才会推送到所有节点，缓存期间可能拿到旧版。想直接取最新版本就用 contents API（不受缓存影响）:
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "irm https://api.github.com/repos/everdom/cc-selector/contents/install.ps1?ref=main -Headers @{Accept='application/vnd.github.raw'} | iex"
+```
+
 **已克隆仓库（Linux / macOS）:**
 
 ```bash
@@ -149,6 +155,12 @@ curl -fsSL https://raw.githubusercontent.com/everdom/cc-selector/main/install.sh
 
 ```powershell
 powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/everdom/cc-selector/main/install.ps1 | iex"
+```
+
+> `raw.githubusercontent.com` is served from a CDN with a 5 minute cache, so a freshly released version takes a few minutes to reach every edge node and you may get the previous one during that window. To always fetch the latest, use the contents API (not cached):
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "irm https://api.github.com/repos/everdom/cc-selector/contents/install.ps1?ref=main -Headers @{Accept='application/vnd.github.raw'} | iex"
 ```
 
 **From a cloned repo (Linux / macOS):**
