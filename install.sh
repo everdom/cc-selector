@@ -28,11 +28,16 @@ case "${BASH_SOURCE[0]:-$0}" in
 esac
 
 # 取得 repo 内文件的路径；repo 不可用时从 GitHub 下载。
+# 结果放在 FETCH_PATH，FETCH_TEMP 标明它是不是需要清理的临时文件。
+# 不用 $(...) 取值是因为在子 shell 里设置的变量传不回来。
 # 注意: 提示信息必须走 stderr，否则会被命令替换捕获污染返回的路径。
+FETCH_PATH=""
+FETCH_TEMP=0
 fetch_file() {
     local name="$1" tmp
     if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/$name" ]; then
-        printf '%s\n' "$SCRIPT_DIR/$name"
+        FETCH_PATH="$SCRIPT_DIR/$name"
+        FETCH_TEMP=0
         return
     fi
     tmp="$(mktemp)"
@@ -45,7 +50,8 @@ fetch_file() {
         echo "[ccs] 错误: 需要 curl 或 wget" >&2
         exit 1
     fi
-    printf '%s\n' "$tmp"
+    FETCH_PATH="$tmp"
+    FETCH_TEMP=1
 }
 
 if [ "$PIPE_INSTALL" = 1 ]; then
@@ -59,24 +65,141 @@ fi
 
 mkdir -p "$INSTALL_DIR" "$SHARE_DIR"
 
-PY_SRC="$(fetch_file ccs.py)"
-cp "$PY_SRC" "$SHARE_DIR/ccs.py"
-rm -f "$PY_SRC"
+# ---------------------------------------------------------------------------
+# prompt_toolkit 依赖安装
+#
+# prompt_toolkit 提供上下键 + 模糊搜索的交互菜单；缺失时 ccs 会退化成
+# "输入编号" 模式，用户看不到上下键菜单却没有任何提示。
+#
+# PEP 668 之后，发行版自带的系统 Python 常常既不带 pip（ensurepip 被拆成
+# 独立包），又被标记为 externally-managed，直接 pip install 会被拒绝。
+# 因此这里按可用性逐级回退，并且每一级都以"能否 import"为成功判据。
+# ---------------------------------------------------------------------------
+
+# 用 pip 装 prompt_toolkit。依次尝试 user site -> user site + 允许装进
+# 受管环境 -> 系统 site-packages（后两级用于 externally-managed 发行版）。
+install_prompt_toolkit_with_pip() {
+    local py="$1"
+    if try_pip_install "$py" --user prompt_toolkit; then return 0; fi
+    if try_pip_install "$py" --user --break-system-packages prompt_toolkit; then return 0; fi
+    if try_pip_install "$py" --break-system-packages prompt_toolkit; then return 0; fi
+    return 1
+}
+
+# 执行一次 pip install，并在安装后确认 prompt_toolkit 真的能 import。
+try_pip_install() {
+    local py="$1"; shift
+    "$py" -m pip install "$@" >/dev/null 2>&1 || return 1
+    "$py" -c "import prompt_toolkit" >/dev/null 2>&1
+}
+
+# 系统没有 pip 时，用官方 get-pip.py 引导一个用户级 pip。
+bootstrap_pip() {
+    local py="$1" tmp rc
+    tmp="$(mktemp)" || return 1
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL https://bootstrap.pypa.io/get-pip.py -o "$tmp" || { rm -f "$tmp"; return 1; }
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO "$tmp" https://bootstrap.pypa.io/get-pip.py || { rm -f "$tmp"; return 1; }
+    else
+        rm -f "$tmp"; return 1
+    fi
+    "$py" "$tmp" --user --break-system-packages >/dev/null 2>&1
+    rc=$?
+    rm -f "$tmp"
+    return $rc
+}
+
+# 最后的兜底: 直接下载纯 Python wheel 解压到 user site，完全绕开 pip。
+install_prompt_toolkit_from_wheel() {
+    local py="$1" site
+    site="$("$py" -c 'import site; print(site.getusersitepackages())' 2>/dev/null)" || return 1
+    [ -n "$site" ] || return 1
+    "$py" - "$site" <<'PYEOF' >/dev/null 2>&1
+import io, json, os, sys, urllib.request, zipfile
+site = sys.argv[1]
+url = "https://pypi.org/pypi/prompt_toolkit/json"
+with urllib.request.urlopen(url, timeout=30) as r:
+    data = json.load(r)
+wheel = None
+for f in data["urls"]:
+    if f["filename"].endswith("py3-none-any.whl"):
+        wheel = f["url"]
+        break
+if wheel is None:
+    sys.exit(1)
+with urllib.request.urlopen(wheel, timeout=60) as r:
+    blob = r.read()
+with zipfile.ZipFile(io.BytesIO(blob)) as z:
+    z.extractall(site)
+PYEOF
+    "$py" -c "import prompt_toolkit" >/dev/null 2>&1
+}
+
+# 安装 prompt_toolkit 并输出运行 ccs.py 的解释器。
+# 成功时 stdout 只有解释器路径；所有提示信息走 stderr，
+# 避免污染 $(...) 捕获到的路径。
+ensure_prompt_toolkit() {
+    local py="$1"
+
+    if "$py" -c "import prompt_toolkit" >/dev/null 2>&1; then
+        echo "$py"
+        return 0
+    fi
+
+    echo "[ccs] 安装 prompt_toolkit ..." >&2
+
+    # 1) 已有 pip
+    if "$py" -m pip --version >/dev/null 2>&1; then
+        if install_prompt_toolkit_with_pip "$py"; then
+            echo "$py"; return 0
+        fi
+    fi
+
+    # 2) 没有 pip: 用 get-pip.py 引导一个用户级 pip 后重试
+    if bootstrap_pip "$py"; then
+        if install_prompt_toolkit_with_pip "$py"; then
+            echo "$py"; return 0
+        fi
+    fi
+
+    # 3) uv（自带包管理能力，且不需要 pip）
+    if command -v uv >/dev/null 2>&1; then
+        if uv pip install --python "$py" --break-system-packages prompt_toolkit >/dev/null 2>&1; then
+            if "$py" -c "import prompt_toolkit" >/dev/null 2>&1; then
+                echo "$py"; return 0
+            fi
+        fi
+    fi
+
+    # 4) 最后的兜底: 直接解压 wheel 到 user site
+    if install_prompt_toolkit_from_wheel "$py"; then
+        echo "$py"; return 0
+    fi
+
+    echo "[ccs] 警告: prompt_toolkit 安装失败，交互界面将降级为编号输入模式（没有上下键菜单）。" >&2
+    echo "[ccs]       手动安装: $py -m pip install --user prompt_toolkit" >&2
+    echo "$py"
+    return 1
+}
+
+fetch_file ccs.py
+cp "$FETCH_PATH" "$SHARE_DIR/ccs.py"
+# 只清理下载出来的临时文件。用本地克隆安装时，FETCH_PATH 指向仓库里的
+# 源文件，删掉它就等于把用户 clone 下来的 ccs.py 删了。
+if [ "$FETCH_TEMP" = 1 ]; then
+    rm -f "$FETCH_PATH"
+fi
+
+# 安装依赖并确定用于运行 ccs.py 的解释器。
+CCS_PY="$(ensure_prompt_toolkit python3)" || true
 
 # 入口脚本指向共享安装位置
 cat > "$INSTALL_DIR/ccs" <<EOF
 #!/usr/bin/env bash
-exec python3 "$SHARE_DIR/ccs.py" "\$@"
+exec "$CCS_PY" "$SHARE_DIR/ccs.py" "\$@"
 EOF
 chmod +x "$INSTALL_DIR/ccs"
-
-# 确保 prompt_toolkit 可用（缺失时交互界面降级，但建议安装）
-if ! python3 -c "import prompt_toolkit" >/dev/null 2>&1; then
-    echo "[ccs] 安装 prompt_toolkit ..."
-    python3 -m pip install --user prompt_toolkit 2>/dev/null \
-        || python3 -m pip install --break-system-packages --user prompt_toolkit 2>/dev/null \
-        || echo "[ccs] 提示: prompt_toolkit 安装失败，交互界面将使用降级模式"
-fi
 
 # 确保 ~/.local/bin 持久化在 PATH 中（即使当前 shell 已临时启用，也写入 rc 防重启丢失）
 for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do

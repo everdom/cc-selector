@@ -38,6 +38,9 @@ MODE_ALIASES = {
     "y": "yolo", "yolo": "yolo",
 }
 
+# 降级提示只打印一次，避免每次选择都刷屏
+_DEGRADED_WARNED = False
+
 
 def help_text():
     return """ccs - 用 cc-switch 中的配置启动 Claude Code（可多配置并行）
@@ -121,6 +124,23 @@ def resolve_mode(argv):
     return None, rest, False
 
 
+def warn_degraded():
+    """提示当前处于降级模式（缺 prompt_toolkit，没有上下键菜单）。
+
+    降级本身不影响功能，但用户看到的是"只能输入编号"的列表，
+    很容易误以为是程序坏了或者自己操作有误，所以这里明确说明原因。
+    """
+    global _DEGRADED_WARNED
+    if _DEGRADED_WARNED:
+        return
+    _DEGRADED_WARNED = True
+    sys.stderr.write(
+        "[ccs] 提示: 未检测到 prompt_toolkit，交互界面已降级为编号输入模式（没有上下键菜单）。\n"
+        "[ccs]       安装后即可恢复上下键 + 模糊搜索菜单:\n"
+        "[ccs]         python3 -m pip install --user prompt_toolkit\n"
+    )
+
+
 def pick_mode_interactive(default_mode):
     """交互式选权限模式。prompt_toolkit 可用则带 UI，否则编号输入。"""
     modes = list(PERMISSION_MODES.keys())
@@ -132,17 +152,23 @@ def pick_mode_interactive(default_mode):
     }
     try:
         from prompt_toolkit.shortcuts import radiolist_dialog
+    except ImportError:
+        warn_degraded()
+        radiolist_dialog = None
 
-        result = radiolist_dialog(
-            title="权限模式",
-            text="选择权限模式（回车确认，Esc 取消）:",
-            values=[(m, f"{m}  -  {desc[m]}" + ("  [默认]" if m == default_mode else ""))
-                    for m in modes],
-            default=default_mode,
-        ).run()
-        return result
-    except Exception:
-        pass
+    if radiolist_dialog is not None:
+        try:
+            result = radiolist_dialog(
+                title="权限模式",
+                text="选择权限模式（回车确认，Esc 取消）:",
+                values=[(m, f"{m}  -  {desc[m]}" + ("  [默认]" if m == default_mode else ""))
+                        for m in modes],
+                default=default_mode,
+            ).run()
+            return result
+        except Exception:
+            # 库在，但运行环境不支持（如无 TTY），静默退回编号输入
+            pass
 
     print("\n权限模式:")
     for i, m in enumerate(modes, 1):
@@ -196,6 +222,7 @@ def pick_interactive(providers):
         from prompt_toolkit.styles import Style
         from prompt_toolkit.widgets import SearchToolbar
     except ImportError:
+        warn_degraded()
         return pick_simple(providers)
 
     # 光标初始停在 cc-switch 正在使用的配置上

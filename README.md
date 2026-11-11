@@ -56,6 +56,8 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 
 安装后重新打开终端即可。依赖：Python 3.8+（`prompt_toolkit` 由安装脚本自动装）。
 
+安装脚本会按可用性依次尝试 `pip install --user` → `pip install --user --break-system-packages` → `get-pip.py` 引导 pip → `uv` → 直接解压 wheel，因此在没有 pip 的发行版（PEP 668 之后系统 Python 常被拆成 `python3-pip` / `python3-venv` 独立包）上也能装上。若最终仍装不上，`ccs` 会明确提示已降级为编号输入模式并给出手动安装命令，不会静默失败。
+
 ### 更新
 
 一键安装/脚本安装的 ccs 可自我更新到 GitHub 最新版:
@@ -162,6 +164,8 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
 Reopen your terminal after install. Requires Python 3.8+ (`prompt_toolkit` is installed automatically).
+
+The installer tries `pip install --user`, then `pip install --user --break-system-packages`, then bootstraps pip via `get-pip.py`, then `uv`, and finally unpacks the wheel directly — so it works on distributions where the system Python ships without pip (PEP 668 split `python3-pip` / `python3-venv` into separate packages). If none of them succeed, `ccs` says so explicitly and prints the manual install command instead of failing silently.
 
 ### Update
 
