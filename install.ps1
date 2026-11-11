@@ -1,7 +1,9 @@
 # ccs installer (Windows)
 #
-# Install (recommended, no clone required):
-#   powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/everdom/cc-selector/main/install.ps1 | iex"
+# Install (recommended, no clone required). The contents API is used because
+# raw.githubusercontent.com is served from a CDN cache, so a freshly released
+# version may not have reached every edge node yet:
+#   powershell -ExecutionPolicy Bypass -Command "irm https://api.github.com/repos/everdom/cc-selector/contents/install.ps1?ref=main -Headers @{Accept='application/vnd.github.raw'} | iex"
 #
 # Install from a clone:
 #   powershell -ExecutionPolicy Bypass -File install.ps1
@@ -174,6 +176,7 @@ if (Test-PyImport "prompt_toolkit") {
         $wheelCode = @'
 import io, json, os, sys, urllib.request, zipfile
 import site, sysconfig
+
 # A venv (or PYTHONNOUSERSITE / python -s) hides the user site directory, so
 # unpack into the interpreter's own site-packages there instead.
 if site.ENABLE_USER_SITE:
@@ -181,19 +184,54 @@ if site.ENABLE_USER_SITE:
 else:
     dest = sysconfig.get_paths()["purelib"]
 os.makedirs(dest, exist_ok=True)
-with urllib.request.urlopen("https://pypi.org/pypi/prompt_toolkit/json", timeout=30) as r:
-    data = json.load(r)
-wheel = None
-for f in data["urls"]:
-    if f["filename"].endswith("py3-none-any.whl"):
-        wheel = f["url"]
-        break
-if wheel is None:
-    sys.exit(1)
-with urllib.request.urlopen(wheel, timeout=60) as r:
-    blob = r.read()
-with zipfile.ZipFile(io.BytesIO(blob)) as z:
-    z.extractall(dest)
+
+def pure_python_wheel(name):
+    with urllib.request.urlopen("https://pypi.org/pypi/%s/json" % name, timeout=30) as r:
+        data = json.load(r)
+    for f in data["urls"]:
+        if f["filename"].endswith("py3-none-any.whl"):
+            return f["url"]
+    return None
+
+def requirements(blob):
+    """Package names listed in the wheel's Requires-Dist metadata."""
+    names = []
+    with zipfile.ZipFile(io.BytesIO(blob)) as z:
+        for info in z.infolist():
+            if not info.filename.endswith(".dist-info/METADATA"):
+                continue
+            text = z.read(info).decode("utf-8", "replace")
+            for line in text.splitlines():
+                if not line.startswith("Requires-Dist:"):
+                    continue
+                spec = line.split(":", 1)[1].strip().split(";")[0].strip()
+                name = spec.split("[")[0]
+                for sep in ("==", ">=", "<=", "~=", "!=", ">", "<"):
+                    name = name.split(sep)[0]
+                name = name.strip()
+                if name:
+                    names.append(name)
+            break
+    return names
+
+def unpack(name, seen):
+    # Dependencies have to come along. prompt_toolkit imports wcwidth
+    # unguarded, so a lone prompt_toolkit wheel can never be imported, and
+    # unpacking it alone leaves a broken package behind.
+    if name.lower() in seen:
+        return
+    seen.add(name.lower())
+    url = pure_python_wheel(name)
+    if url is None:
+        return
+    with urllib.request.urlopen(url, timeout=60) as r:
+        blob = r.read()
+    for dep in requirements(blob):
+        unpack(dep, seen)
+    with zipfile.ZipFile(io.BytesIO(blob)) as z:
+        z.extractall(dest)
+
+unpack("prompt_toolkit", set())
 '@
         $tmpPy = Join-Path $env:TEMP "ccs_wheel_$PID.py"
         Set-Content $tmpPy -Value $wheelCode -Encoding ASCII

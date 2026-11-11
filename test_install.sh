@@ -134,13 +134,6 @@ else
         bad "ccs.py 未安装"
     fi
     if "$wrapper" --version >/dev/null 2>&1; then ok "wrapper 可正常运行"; else bad "wrapper 无法运行"; fi
-    # wrapper 必须钉死解释器: 否则用户中途换掉 PATH 里的 python3，
-    # 装依赖的 python 和跑 ccs 的 python 就不是同一个，会静默降级
-    if grep -qE 'exec "?[^ "]+/python3?"?' "$wrapper"; then
-        ok "wrapper 钉死了解释器路径"
-    else
-        bad "wrapper 没有钉死解释器路径"
-    fi
 fi
 
 echo "== 用例 2: 缺 prompt_toolkit，但有 pip =="
@@ -168,6 +161,16 @@ if [ "$status" = 0 ]; then ok "安装脚本不因依赖失败而中断"; else ba
 if grep -q "降级" "$WORK/c3.log"; then ok "明确提示了降级模式"; else bad "依赖失败时没有明确提示"; fi
 if grep -q "手动安装" "$WORK/c3.log"; then ok "给出了手动安装命令"; else bad "没有给出手动安装命令"; fi
 if [ -x "$home/.local/bin/ccs" ]; then ok "wrapper 仍然生成"; else bad "wrapper 未生成"; fi
+# wrapper 必须钉死解释器的绝对路径: 否则用户中途换掉 PATH 里的 python3，
+# 装依赖的 python 和跑 ccs 的 python 就不是同一个，会静默降级。
+# 这条断言放在用例 3（纯桩，零外部依赖）而不是用例 1，因为用例 1 依赖
+# uv / python3-venv，在最需要它的机器上反而会被跳过。
+wrapper="$home/.local/bin/ccs"
+if grep -qE 'exec "?'"$pathdir"'/' "$wrapper"; then
+    ok "wrapper 钉死了解释器的绝对路径"
+else
+    bad "wrapper 没有钉死解释器的绝对路径: $(head -2 "$wrapper" | tail -1)"
+fi
 
 echo "== 用例 4: 本地克隆安装不得删除源文件 =="
 home="$(make_home h4)"
@@ -189,6 +192,48 @@ else
     fi
 fi
 
+echo "== 用例 5: wheel 兜底必须连依赖一起装 =="
+# prompt_toolkit 会无保护地 import wcwidth，只解压它自己的 wheel 永远装不成，
+# 而且会在 site-packages 里留下一个坏掉的包。这里直接跑 install.sh 里
+# wheel 兜底的那段代码，验证装出来的东西真的能 import。
+venv="$WORK/w5/venv"
+mkdir -p "$WORK/w5"
+if command -v uv >/dev/null 2>&1; then
+    uv venv "$venv" >/dev/null 2>&1
+else
+    python3 -m venv "$venv" >/dev/null 2>&1
+fi
+if [ ! -x "$venv/bin/python" ]; then
+    skip "无法创建干净的 python 环境 (需要 uv 或 python3-venv)"
+elif ! curl -fsS -m 10 -o /dev/null https://pypi.org/pypi/prompt_toolkit/json 2>/dev/null; then
+    skip "pypi.org 不可达，跳过 wheel 兜底测试"
+else
+    awk '/^import io, json, os, sys, urllib.request, zipfile$/{f=1} /^PYEOF$/{f=0} f' \
+        "$REPO_DIR/install.sh" > "$WORK/w5/wheel.py"
+    if "$venv/bin/python" "$WORK/w5/wheel.py" >/dev/null 2>&1; then
+        if "$venv/bin/python" -c "import prompt_toolkit" >/dev/null 2>&1; then
+            ok "wheel 兜底装出的 prompt_toolkit 可以 import"
+        else
+            bad "wheel 兜底装出的 prompt_toolkit 无法 import（依赖没一起装）"
+        fi
+        if "$venv/bin/python" -c "import wcwidth" >/dev/null 2>&1; then
+            ok "依赖 wcwidth 也一并装上了"
+        else
+            bad "依赖 wcwidth 缺失"
+        fi
+    else
+        bad "wheel 兜底脚本执行失败"
+    fi
+fi
+
 echo ""
 echo "通过 $PASS 项，失败 $FAIL 项，跳过 $SKIP 项"
-[ "$FAIL" = 0 ]
+if [ "$FAIL" -ne 0 ]; then
+    exit 1
+fi
+if [ "$SKIP" -ne 0 ]; then
+    # 跳过的用例等于没测到。绿灯通过会掩盖覆盖不足，所以这里不放过。
+    echo "警告: 有 $SKIP 项被跳过，覆盖不完整（需要 uv 或 python3-venv 才能跑全）" >&2
+    exit 1
+fi
+exit 0

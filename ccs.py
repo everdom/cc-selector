@@ -134,14 +134,22 @@ def warn_degraded():
     if _DEGRADED_WARNED:
         return
     _DEGRADED_WARNED = True
-    # 自救命令必须真的能跑: 受管环境 (PEP 668) 会拒绝 --user 安装，
-    # 只在 Unix 一侧补 --break-system-packages，Windows 没有这个限制。
+    # 自救命令必须真的能跑:
+    #   - venv 里 pip 不允许 --user（"User site-packages are not visible in
+    #     this virtualenv"），只能装进 venv 自己
+    #   - 受管环境 (PEP 668) 会拒绝 --user 安装，得加 --break-system-packages
+    #   - Windows 没有 PEP 668，只需要 --user
     py = "python" if os.name == "nt" else "python3"
-    extra = "" if os.name == "nt" else " --break-system-packages"
+    if os.name == "nt":
+        extra = " --user"
+    elif sys.prefix != sys.base_prefix:
+        extra = " --break-system-packages"
+    else:
+        extra = " --user --break-system-packages"
     sys.stderr.write(
         "[ccs] 提示: 未检测到 prompt_toolkit，交互界面已降级为编号输入模式（没有上下键菜单）。\n"
         "[ccs]       安装后即可恢复上下键 + 模糊搜索菜单:\n"
-        f"[ccs]         {py} -m pip install --user{extra} prompt_toolkit\n"
+        f"[ccs]         {py} -m pip install{extra} prompt_toolkit\n"
     )
 
 

@@ -36,6 +36,12 @@ cc-selector 换了一种方式：**不动全局配置**。它把选中的配置�
 curl -fsSL https://raw.githubusercontent.com/everdom/cc-selector/main/install.sh | bash
 ```
 
+> `raw.githubusercontent.com` 带 CDN 缓存，新发布的版本要过一阵子才会推送到所有边缘节点，缓存期间可能拿到旧版。想直接取最新版本就走 contents API（不受缓存影响）:
+
+```bash
+curl -fsSL -H "Accept: application/vnd.github.raw" "https://api.github.com/repos/everdom/cc-selector/contents/install.sh?ref=main" | bash
+```
+
 **Windows 一键安装（推荐，无需克隆仓库）:**
 
 ```powershell
@@ -64,7 +70,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 
 安装后重新打开终端即可。依赖：Python 3.8+（`prompt_toolkit` 由安装脚本自动装）。
 
-安装脚本会按可用性依次尝试 `pip install --user` → `pip install --user --break-system-packages` → `get-pip.py` 引导 pip → `uv` → 直接解压 wheel，因此在没有 pip 的发行版（PEP 668 之后系统 Python 常被拆成 `python3-pip` / `python3-venv` 独立包）上也能装上。若最终仍装不上，`ccs` 会明确提示已降级为编号输入模式并给出手动安装命令，不会静默失败。
+安装脚本会按可用性依次尝试 `pip install --user` → `pip install --user --break-system-packages` → `pip install --break-system-packages` → `get-pip.py` 引导 pip → `uv` → 直接解压 wheel，因此在没有 pip 的发行版（PEP 668 之后系统 Python 常被拆成 `python3-pip` / `python3-venv` 独立包）上也能装上。若最终仍装不上，`ccs` 会明确提示已降级为编号输入模式并给出手动安装命令，不会静默失败。
 
 ### 更新
 
@@ -153,6 +159,12 @@ cc-selector takes a different approach: **it never touches the global config**. 
 curl -fsSL https://raw.githubusercontent.com/everdom/cc-selector/main/install.sh | bash
 ```
 
+> `raw.githubusercontent.com` is served from a CDN cache, so a freshly released version takes a while to reach every edge node and you may get the previous one during that window. To always fetch the latest, go through the contents API (not cached):
+
+```bash
+curl -fsSL -H "Accept: application/vnd.github.raw" "https://api.github.com/repos/everdom/cc-selector/contents/install.sh?ref=main" | bash
+```
+
 **Windows one-liner (recommended, no clone needed):**
 
 ```powershell
@@ -181,7 +193,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 
 Reopen your terminal after install. Requires Python 3.8+ (`prompt_toolkit` is installed automatically).
 
-The installer tries `pip install --user`, then `pip install --user --break-system-packages`, then bootstraps pip via `get-pip.py`, then `uv`, and finally unpacks the wheel directly — so it works on distributions where the system Python ships without pip (PEP 668 split `python3-pip` / `python3-venv` into separate packages). If none of them succeed, `ccs` says so explicitly and prints the manual install command instead of failing silently.
+The installer tries `pip install --user`, then `pip install --user --break-system-packages`, then `pip install --break-system-packages`, then bootstraps pip via `get-pip.py`, then `uv`, and finally unpacks the wheels directly — so it works on distributions where the system Python ships without pip (PEP 668 split `python3-pip` / `python3-venv` into separate packages). If none of them succeed, `ccs` says so explicitly and prints the manual install command instead of failing silently.
 
 ### Update
 
