@@ -1,77 +1,39 @@
-﻿# ccs 安装脚本 (Windows)
+# ccs installer (Windows)
 #
-# 方式一（推荐，无需克隆仓库，远程一键安装）:
+# Install (recommended, no clone required):
 #   powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/everdom/cc-selector/main/install.ps1 | iex"
 #
-# 方式二（已克隆仓库）:
+# Install from a clone:
 #   powershell -ExecutionPolicy Bypass -File install.ps1
 #
-# 安装后可用 ccs --update 自我更新。
+# Keep this file ASCII-only and free of a UTF-8 BOM:
+#   - "irm | iex" pipes the raw bytes into the parser. A UTF-8 BOM arrives
+#     as U+FEFF, and PowerShell 5.1 then tries to run the first line as a
+#     command ("The term 'Windows' is not recognized ...").
+#   - "powershell -File" reads the file with the system ANSI code page, so
+#     non-ASCII characters turn into mojibake.
+# Keeping user-facing messages in English makes both paths behave the same.
 $ErrorActionPreference = "Stop"
 
 $RepoRaw = "https://raw.githubusercontent.com/everdom/cc-selector/main"
 $RepoPath = "everdom/cc-selector"
 $InstallDir = "$env:LOCALAPPDATA\Programs\ccs"
 
-# 检测安装来源: -File 运行时脚本在磁盘上，可直接复制本地文件；
-# 通过 irm | iex 管道安装时 $MyInvocation.MyCommand.Path 为空，需从 GitHub 下载。
+# Detect install source: with -File the script lives on disk and local files
+# can be reused; with "irm | iex" $MyInvocation.MyCommand.Path is empty.
 $ScriptFile = try { $MyInvocation.MyCommand.Path } catch { $null }
 $ProjectDir = if ($ScriptFile) { Split-Path -Parent $ScriptFile } else { $null }
 
-function Get-SourceFile([string]$Name) {
-    # 仓库里有同名文件就直接用（本地克隆安装），否则从 GitHub 下载临时文件。
-    if ($ProjectDir -and (Test-Path (Join-Path $ProjectDir $Name))) {
-        return (Join-Path $ProjectDir $Name)
-    }
-    $tmp = Join-Path $env:TEMP "$Name.$PID.tmp"
-    Write-Host "[ccs] 从 GitHub 下载 $Name ..."
-    # 优先用 contents API: raw.githubusercontent.com 走 CDN 缓存
-    # (cache-control: max-age=300)，刚 push 的内容最多 5 分钟才对所有人可见，
-    # 而且不同边缘节点状态不一致（有的 404、有的返回旧版）。API 直接读仓库。
-    try {
-        Invoke-WebRequest -Uri "https://api.github.com/repos/$RepoPath/contents/$Name?ref=main" `
-            -Headers @{ Accept = "application/vnd.github.raw" } `
-            -OutFile $tmp -UseBasicParsing
-    } catch {
-        # API 匿名调用有 60 次/小时限制，超了退回 raw
-        try {
-            Invoke-WebRequest -Uri "$RepoRaw/$Name" -OutFile $tmp -UseBasicParsing
-        } catch {
-            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
-            Write-Host "[ccs] 错误: 下载 $Name 失败: $_" -ForegroundColor Red
-            exit 1
-        }
-    }
-    return $tmp
-}
-
-# 检查 python 是否可用。
-# 优先用 PATH 里的 python；若没有但有 py 启动器，则退回 py -3。
-$PyExe = $null
-$PyPrefix = @()
-try {
-    $cmd = Get-Command python -ErrorAction Stop
-    $PyExe = $cmd.Source
-} catch {
-    if (Get-Command py -ErrorAction SilentlyContinue) {
-        $PyExe = "py"
-        $PyPrefix = @("-3")
-    }
-}
-if (-not $PyExe) {
-    Write-Host "[ccs] 错误: 未找到 python，请先安装 Python 3.8+ (https://www.python.org/downloads/)" -ForegroundColor Red
-    exit 1
-}
-
-# 执行外部程序并返回退出码。
-#
-# 两个坑:
-#   - PowerShell 5.1 下 native 命令的 stderr 会被当成终止错误
-#     (NativeCommandError)，$ErrorActionPreference="Stop" 时直接中断脚本，
-#     所以这里临时放宽成 Continue。
-#   - 不走 cmd /c 转发: cmd 不支持 UNC 路径作为当前目录，在网络路径下
-#     调用会整条失败，而且 cmd 的引号规则在路径含空格时很容易出错。
 function Invoke-Exe([string]$Exe, [string[]]$ExeArgv) {
+    # Run an external program and return its exit code.
+    #
+    # Two traps this avoids:
+    #   - PowerShell 5.1 turns a native command's stderr into a terminating
+    #     error (NativeCommandError) when $ErrorActionPreference is Stop, so
+    #     the preference is relaxed for the duration of the call.
+    #   - cmd /c is not used as a relay: cmd cannot use a UNC path as its
+    #     current directory, so every call fails on network paths, and its
+    #     quoting rules break on paths containing spaces.
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
@@ -90,20 +52,80 @@ function Test-PyImport([string]$Module) {
     return (Invoke-Py @('-c', "import $Module")) -eq 0
 }
 
-Write-Host "[ccs] 安装到 $InstallDir ..."
+# Locate a usable python.
+# Prefer the one on PATH; fall back to the "py" launcher with "-3".
+# A Microsoft Store alias stub resolves as a command but cannot run, so the
+# interpreter is actually executed before it is accepted.
+$PyExe = $null
+$PyPrefix = @()
+try {
+    $candidate = (Get-Command python -ErrorAction Stop).Source
+    if ((Invoke-Exe $candidate @('--version')) -eq 0) {
+        $PyExe = $candidate
+    }
+} catch {
+}
+if (-not $PyExe) {
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+        if ((Invoke-Exe "py" @('-3', '--version')) -eq 0) {
+            $PyExe = "py"
+            $PyPrefix = @("-3")
+        }
+    }
+}
+if (-not $PyExe) {
+    Write-Host "[ccs] ERROR: no usable python found. Install Python 3.8+ from https://www.python.org/downloads/" -ForegroundColor Red
+    exit 1
+}
+
+# Fetch a single file from the repository.
+# $FetchIsTemp tells the caller whether the path is a throwaway download
+# (delete it) or a file inside the local clone (never delete that).
+$FetchIsTemp = $false
+function Get-SourceFile([string]$Name) {
+    if ($ProjectDir -and (Test-Path (Join-Path $ProjectDir $Name))) {
+        $script:FetchIsTemp = $false
+        return (Join-Path $ProjectDir $Name)
+    }
+    $tmp = Join-Path $env:TEMP "$Name.$PID.tmp"
+    Write-Host "[ccs] Downloading $Name from GitHub ..."
+    # Prefer the contents API: raw.githubusercontent.com is served from a CDN
+    # with cache-control: max-age=300, so freshly pushed content is not
+    # visible everywhere for up to 5 minutes and some edge nodes 404. The API
+    # reads the repository directly.
+    try {
+        Invoke-WebRequest -Uri "https://api.github.com/repos/$RepoPath/contents/$Name?ref=main" `
+            -Headers @{ Accept = "application/vnd.github.raw" } `
+            -OutFile $tmp -UseBasicParsing
+    } catch {
+        # The API allows 60 anonymous requests per hour; fall back to raw.
+        try {
+            Invoke-WebRequest -Uri "$RepoRaw/$Name" -OutFile $tmp -UseBasicParsing
+        } catch {
+            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+            Write-Host "[ccs] ERROR: failed to download $Name : $_" -ForegroundColor Red
+            exit 1
+        }
+    }
+    $script:FetchIsTemp = $true
+    return $tmp
+}
+
+Write-Host "[ccs] Installing to $InstallDir ..."
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
 $pySrc = Get-SourceFile "ccs.py"
 Copy-Item $pySrc "$InstallDir\ccs.py" -Force
-if ($pySrc -like "$env:TEMP*") { Remove-Item $pySrc -Force }
+if ($FetchIsTemp) { Remove-Item $pySrc -Force }
 
 $cmdSrc = Get-SourceFile "ccs.cmd"
 Copy-Item $cmdSrc "$InstallDir\ccs.cmd" -Force
-if ($cmdSrc -like "$env:TEMP*") { Remove-Item $cmdSrc -Force }
+if ($FetchIsTemp) { Remove-Item $cmdSrc -Force }
 
-# 把 ccs.cmd 里的解释器固定为本次实际使用的那个。
-# 机器上装了多个 Python 时，PATH 顺序一变就会导致"装依赖的 python"和
-# "跑 ccs 的 python"不是同一个，装好的 prompt_toolkit 就白装了。
+# Pin the interpreter in ccs.cmd to the one used here.
+# With several Pythons installed, a change in PATH order would otherwise
+# leave "the python that installed prompt_toolkit" and "the python that runs
+# ccs" as two different interpreters, and the dependency would be wasted.
 if ($PyExe -ne "py" -and (Test-Path $PyExe)) {
     $cmdText = Get-Content "$InstallDir\ccs.cmd" -Raw
     $cmdText = $cmdText -replace '(?m)^python\s', "`"$PyExe`" "
@@ -111,32 +133,33 @@ if ($PyExe -ne "py" -and (Test-Path $PyExe)) {
 }
 
 # ---------------------------------------------------------------------------
-# prompt_toolkit 依赖安装
+# prompt_toolkit dependency
 #
-# prompt_toolkit 提供上下键 + 模糊搜索的交互菜单；缺失时 ccs 会退化成
-# "输入编号" 模式，用户看不到上下键菜单却没有任何提示。
+# prompt_toolkit provides the arrow-key + fuzzy-search picker. Without it ccs
+# falls back to "type a number", and the user gets no menu and no hint.
 # ---------------------------------------------------------------------------
 
 if (Test-PyImport "prompt_toolkit") {
-    Write-Host "[ccs] prompt_toolkit 已就绪"
+    Write-Host "[ccs] prompt_toolkit is ready"
 } else {
-    Write-Host "[ccs] 安装 prompt_toolkit ..."
+    Write-Host "[ccs] Installing prompt_toolkit ..."
 
     $installed = $false
 
-    # 1) 标准 pip 安装
+    # 1) standard pip install
     if ((Invoke-Py @('-m', 'pip', 'install', 'prompt_toolkit')) -eq 0 -and (Test-PyImport "prompt_toolkit")) {
         $installed = $true
     }
 
-    # 2) user site 变体（个别环境默认写系统目录会失败）
+    # 2) user site variant (some environments refuse to write to the system
+    #    directory by default)
     if (-not $installed) {
         if ((Invoke-Py @('-m', 'pip', 'install', '--user', 'prompt_toolkit')) -eq 0 -and (Test-PyImport "prompt_toolkit")) {
             $installed = $true
         }
     }
 
-    # 3) uv 兜底（自带包管理能力，不需要 pip）
+    # 3) uv fallback (bundles its own package management, no pip needed)
     if (-not $installed) {
         if (Get-Command uv -ErrorAction SilentlyContinue) {
             if ((Invoke-Exe "uv" @('pip', 'install', '--python', $PyExe, '--break-system-packages', 'prompt_toolkit')) -eq 0) {
@@ -145,11 +168,19 @@ if (Test-PyImport "prompt_toolkit") {
         }
     }
 
-    # 4) 最后的兜底: 直接下载纯 Python wheel 解压到 user site，绕开 pip
+    # 4) last resort: download the pure-python wheel and unpack it into the
+    #    site-packages directory, bypassing pip entirely
     if (-not $installed) {
         $wheelCode = @'
-import io, json, sys, urllib.request, zipfile
-site = sys.argv[1]
+import io, json, os, sys, urllib.request, zipfile
+import site, sysconfig
+# A venv (or PYTHONNOUSERSITE / python -s) hides the user site directory, so
+# unpack into the interpreter's own site-packages there instead.
+if site.ENABLE_USER_SITE:
+    dest = site.getusersitepackages()
+else:
+    dest = sysconfig.get_paths()["purelib"]
+os.makedirs(dest, exist_ok=True)
 with urllib.request.urlopen("https://pypi.org/pypi/prompt_toolkit/json", timeout=30) as r:
     data = json.load(r)
 wheel = None
@@ -162,38 +193,32 @@ if wheel is None:
 with urllib.request.urlopen(wheel, timeout=60) as r:
     blob = r.read()
 with zipfile.ZipFile(io.BytesIO(blob)) as z:
-    z.extractall(site)
+    z.extractall(dest)
 '@
-        $prev = $ErrorActionPreference
-        $ErrorActionPreference = 'Continue'
-        $site = (& $PyExe @($PyPrefix) @('-c', 'import site; print(site.getusersitepackages())') 2>$null | Select-Object -First 1)
-        $ErrorActionPreference = $prev
-        if ($site) {
-            $tmpPy = Join-Path $env:TEMP "ccs_wheel_$PID.py"
-            Set-Content $tmpPy -Value $wheelCode -Encoding ASCII
-            Invoke-Exe $PyExe (@($PyPrefix) + @($tmpPy, "$site")) | Out-Null
-            Remove-Item $tmpPy -Force -ErrorAction SilentlyContinue
-            if (Test-PyImport "prompt_toolkit") { $installed = $true }
-        }
+        $tmpPy = Join-Path $env:TEMP "ccs_wheel_$PID.py"
+        Set-Content $tmpPy -Value $wheelCode -Encoding ASCII
+        Invoke-Exe $PyExe (@($PyPrefix) + @($tmpPy)) | Out-Null
+        Remove-Item $tmpPy -Force -ErrorAction SilentlyContinue
+        if (Test-PyImport "prompt_toolkit") { $installed = $true }
     }
 
     if (-not $installed) {
-        Write-Host "[ccs] 警告: prompt_toolkit 安装失败，交互界面将降级为编号输入模式（没有上下键菜单）。" -ForegroundColor Yellow
-        Write-Host "[ccs]       手动安装: $PyExe $PyPrefix -m pip install prompt_toolkit" -ForegroundColor Yellow
+        Write-Host "[ccs] WARNING: prompt_toolkit could not be installed. The picker falls back to numbered input (no arrow-key menu)." -ForegroundColor Yellow
+        Write-Host "[ccs]          install it manually with: $PyExe $PyPrefix -m pip install --user prompt_toolkit" -ForegroundColor Yellow
     }
 }
 
-# 加入用户 PATH（已存在则跳过）
+# Add to the user PATH (skip if already there)
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($userPath -notlike "*$InstallDir*") {
     [Environment]::SetEnvironmentVariable(
         "Path", "$userPath;$InstallDir", "User")
-    Write-Host "[ccs] 已将 $InstallDir 加入用户 PATH"
+    Write-Host "[ccs] Added $InstallDir to the user PATH"
 }
 
 Write-Host ""
-Write-Host "[ccs] 安装完成！重新打开终端后即可使用:" -ForegroundColor Green
-Write-Host "    ccs              # 交互式选择配置"
-Write-Host "    ccs --list       # 列出所有配置"
-Write-Host "    ccs --update     # 更新到 GitHub 最新版"
-Write-Host "    ccs 名称 -- 参数 # 指定配置并把参数传给 claude"
+Write-Host "[ccs] Installed. Reopen your terminal, then:" -ForegroundColor Green
+Write-Host "    ccs              # pick a provider interactively"
+Write-Host "    ccs --list       # list all providers"
+Write-Host "    ccs --update     # update to the latest version on GitHub"
+Write-Host "    ccs <name> --args  # use a provider and pass args to claude"
