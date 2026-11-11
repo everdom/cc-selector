@@ -143,14 +143,20 @@ bootstrap_pip() {
 
 # 最后的兜底: 直接下载纯 Python wheel 解压到 user site，完全绕开 pip。
 install_prompt_toolkit_from_wheel() {
-    local py="$1" site
-    site="$("$py" -c 'import site; print(site.getusersitepackages())' 2>/dev/null)" || return 1
-    [ -n "$site" ] || return 1
-    "$py" - "$site" <<'PYEOF' >/dev/null 2>&1
+    local py="$1"
+    "$py" - <<'PYEOF' >/dev/null 2>&1
 import io, json, os, sys, urllib.request, zipfile
-site = sys.argv[1]
-url = "https://pypi.org/pypi/prompt_toolkit/json"
-with urllib.request.urlopen(url, timeout=30) as r:
+import site, sysconfig
+# venv (or PYTHONNOUSERSITE / python -s) hides the user site directory, so
+# unpack into the interpreter's own site-packages there instead. Otherwise the
+# package lands somewhere the interpreter cannot see and the install looks
+# like it failed while leaving a stray copy behind.
+if site.ENABLE_USER_SITE:
+    dest = site.getusersitepackages()
+else:
+    dest = sysconfig.get_paths()["purelib"]
+os.makedirs(dest, exist_ok=True)
+with urllib.request.urlopen("https://pypi.org/pypi/prompt_toolkit/json", timeout=30) as r:
     data = json.load(r)
 wheel = None
 for f in data["urls"]:
@@ -162,7 +168,7 @@ if wheel is None:
 with urllib.request.urlopen(wheel, timeout=60) as r:
     blob = r.read()
 with zipfile.ZipFile(io.BytesIO(blob)) as z:
-    z.extractall(site)
+    z.extractall(dest)
 PYEOF
     "$py" -c "import prompt_toolkit" >/dev/null 2>&1
 }
@@ -209,7 +215,7 @@ ensure_prompt_toolkit() {
     fi
 
     echo "[ccs] 警告: prompt_toolkit 安装失败，交互界面将降级为编号输入模式（没有上下键菜单）。" >&2
-    echo "[ccs]       手动安装: $py -m pip install --user prompt_toolkit" >&2
+    echo "[ccs]       手动安装: $py -m pip install --user --break-system-packages prompt_toolkit" >&2
     echo "$py"
     return 1
 }
@@ -223,7 +229,11 @@ if [ "$FETCH_TEMP" = 1 ]; then
 fi
 
 # 安装依赖并确定用于运行 ccs.py 的解释器。
-CCS_PY="$(ensure_prompt_toolkit python3)" || true
+#
+# 用绝对路径钉死: 装依赖时用的是安装那一刻 PATH 里的 python3，而 wrapper
+# 若在运行时按 PATH 重新解析，用户中途换了解释器就会静默降级成编号输入
+# —— 正是这次要修的问题。install.ps1 把解释器写死进 ccs.cmd 也是同一理由。
+CCS_PY="$(ensure_prompt_toolkit "$(command -v python3)")" || true
 
 # 入口脚本指向共享安装位置
 cat > "$INSTALL_DIR/ccs" <<EOF

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # install.sh 的回归测试。
 #
-# 用隔离的 HOME 和 PATH 桩覆盖三条路径:
-#   1. 依赖已就绪      -> 不应重复安装
+# 用隔离的 HOME 和 PATH 桩覆盖四条路径:
+#   1. 依赖已就绪          -> 不应重复安装
 #   2. 缺 prompt_toolkit 但有 pip -> 应能自动装上
-#   3. 完全装不上      -> 必须明确警告，而不是静默降级
+#   3. 完全装不上          -> 必须明确警告，而不是静默降级
+#   4. 本地克隆安装        -> 不得删除仓库里的源文件
 #
 # 用法: ./test_install.sh
 set -u
@@ -13,12 +14,14 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK="$(mktemp -d)"
 PASS=0
 FAIL=0
+SKIP=0
 
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 
-ok()  { echo "  [PASS] $1"; PASS=$((PASS+1)); }
-bad() { echo "  [FAIL] $1"; FAIL=$((FAIL+1)); }
+ok()   { echo "  [PASS] $1"; PASS=$((PASS+1)); }
+bad()  { echo "  [FAIL] $1"; FAIL=$((FAIL+1)); }
+skip() { echo "  [SKIP] $1"; SKIP=$((SKIP+1)); }
 
 # 造一个没有任何配置的隔离 HOME
 make_home() {
@@ -28,7 +31,9 @@ make_home() {
 }
 
 # 造一个"有 python 但没有 prompt_toolkit / 没有 pip / 没有 venv"的桩。
-# 用真实解释器时缺依赖会走下载路径，这里用桩把那些路径掐断。
+#
+# 同时把 curl / wget / uv 也桩掉: 否则 bootstrap_pip 会真的去连
+# bootstrap.pypa.io，测试既依赖网络，又没有真的测到它以为测的东西。
 make_stub_bin() {
     local dir="$WORK/$1/bin"
     mkdir -p "$dir"
@@ -43,22 +48,31 @@ case "$1" in
             pip|venv) exit 1;;
         esac
         ;;
+    -c) exit 0;;
+    *) exit 1;;   # 执行脚本文件（get-pip.py 等）一律失败
 esac
 exit 0
 STUB
-    chmod +x "$dir/python3"
+    for tool in curl wget uv; do
+        printf '#!/usr/bin/env bash\nexit 1\n' > "$dir/$tool"
+    done
+    chmod +x "$dir/python3" "$dir/curl" "$dir/wget" "$dir/uv"
     echo "$dir"
 }
 
 # 造一个干净的、不含 prompt_toolkit 的 python3 环境（有 pip）。
+#
 # 直接返回 venv 的 bin 目录而不是做软链: 软链会让 Python 把 prefix 解析回
 # 系统 python，venv 的 site-packages 就整个丢了。
+# uv venv 默认不装 pip，必须 --seed，否则测到的是 uv 分支而不是 pip 分支。
 make_bare_python() {
     local venv="$WORK/$1/venv"
     if command -v uv >/dev/null 2>&1; then
-        uv venv "$venv" >/dev/null 2>&1 || return 1
+        uv venv --seed "$venv" >/dev/null 2>&1 || return 1
+    elif python3 -m venv "$venv" >/dev/null 2>&1; then
+        :
     else
-        python3 -m venv "$venv" >/dev/null 2>&1 || return 1
+        return 1
     fi
     echo "$venv/bin"
 }
@@ -102,27 +116,38 @@ run_install() {
 echo "== 用例 1: prompt_toolkit 已就绪 =="
 home="$(make_home h1)"
 pathdir="$(make_ready_python r1)"
-status="$(run_install "$home" "$pathdir" c1)"
-if [ "$status" = 0 ]; then ok "安装脚本退出码为 0"; else bad "安装脚本退出码为 $status"; fi
-if grep -q "安装 prompt_toolkit" "$WORK/c1.log"; then
-    bad "依赖已就绪却仍尝试安装"
+if [ -z "$pathdir" ]; then
+    skip "无法创建带 prompt_toolkit 的 python 环境 (需要 uv 或 python3-venv)"
 else
-    ok "依赖已就绪时不重复安装"
+    status="$(run_install "$home" "$pathdir" c1)"
+    if [ "$status" = 0 ]; then ok "安装脚本退出码为 0"; else bad "安装脚本退出码为 $status"; fi
+    if grep -q "安装 prompt_toolkit" "$WORK/c1.log"; then
+        bad "依赖已就绪却仍尝试安装"
+    else
+        ok "依赖已就绪时不重复安装"
+    fi
+    wrapper="$home/.local/bin/ccs"
+    if [ -x "$wrapper" ]; then ok "wrapper 已生成且可执行"; else bad "wrapper 未生成或不可执行"; fi
+    if grep -q "prompt_toolkit" "$home/.local/share/ccs/ccs.py"; then
+        ok "ccs.py 已安装"
+    else
+        bad "ccs.py 未安装"
+    fi
+    if "$wrapper" --version >/dev/null 2>&1; then ok "wrapper 可正常运行"; else bad "wrapper 无法运行"; fi
+    # wrapper 必须钉死解释器: 否则用户中途换掉 PATH 里的 python3，
+    # 装依赖的 python 和跑 ccs 的 python 就不是同一个，会静默降级
+    if grep -qE 'exec "?[^ "]+/python3?"?' "$wrapper"; then
+        ok "wrapper 钉死了解释器路径"
+    else
+        bad "wrapper 没有钉死解释器路径"
+    fi
 fi
-wrapper="$home/.local/bin/ccs"
-if [ -x "$wrapper" ]; then ok "wrapper 已生成且可执行"; else bad "wrapper 未生成或不可执行"; fi
-if grep -q "prompt_toolkit" "$home/.local/share/ccs/ccs.py"; then
-    ok "ccs.py 已安装"
-else
-    bad "ccs.py 未安装"
-fi
-if "$wrapper" --version >/dev/null 2>&1; then ok "wrapper 可正常运行"; else bad "wrapper 无法运行"; fi
 
 echo "== 用例 2: 缺 prompt_toolkit，但有 pip =="
 home="$(make_home h2)"
 pathdir="$(make_bare_python b2)"
 if [ -z "$pathdir" ]; then
-    echo "  [SKIP] 无法创建带 pip 的裸 python 环境"
+    skip "无法创建带 pip 的裸 python 环境 (需要 uv 或 python3-venv)"
 else
     status="$(run_install "$home" "$pathdir" c2)"
     if [ "$status" = 0 ]; then ok "安装脚本退出码为 0"; else bad "安装脚本退出码为 $status"; fi
@@ -147,19 +172,23 @@ if [ -x "$home/.local/bin/ccs" ]; then ok "wrapper 仍然生成"; else bad "wrap
 echo "== 用例 4: 本地克隆安装不得删除源文件 =="
 home="$(make_home h4)"
 pathdir="$(make_ready_python r4)"
-status="$(run_install "$home" "$pathdir" c4)"
-if [ "$status" = 0 ]; then ok "安装脚本退出码为 0"; else bad "安装脚本退出码为 $status"; fi
-if [ "$(cat "$WORK/c4.src")" = kept ]; then
-    ok "本地克隆安装后 ccs.py 仍在（源文件未被删除）"
+if [ -z "$pathdir" ]; then
+    skip "无法创建带 prompt_toolkit 的 python 环境 (需要 uv 或 python3-venv)"
 else
-    bad "安装脚本把仓库里的 ccs.py 删掉了"
-fi
-if [ -f "$REPO_DIR/ccs.py" ]; then
-    ok "仓库中的 ccs.py 未受影响"
-else
-    bad "仓库中的 ccs.py 丢失"
+    status="$(run_install "$home" "$pathdir" c4)"
+    if [ "$status" = 0 ]; then ok "安装脚本退出码为 0"; else bad "安装脚本退出码为 $status"; fi
+    if [ "$(cat "$WORK/c4.src")" = kept ]; then
+        ok "本地克隆安装后 ccs.py 仍在（源文件未被删除）"
+    else
+        bad "安装脚本把仓库里的 ccs.py 删掉了"
+    fi
+    if [ -f "$REPO_DIR/ccs.py" ]; then
+        ok "仓库中的 ccs.py 未受影响"
+    else
+        bad "仓库中的 ccs.py 丢失"
+    fi
 fi
 
 echo ""
-echo "通过 $PASS 项，失败 $FAIL 项"
+echo "通过 $PASS 项，失败 $FAIL 项，跳过 $SKIP 项"
 [ "$FAIL" = 0 ]

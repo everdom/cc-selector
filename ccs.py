@@ -134,10 +134,14 @@ def warn_degraded():
     if _DEGRADED_WARNED:
         return
     _DEGRADED_WARNED = True
+    # 自救命令必须真的能跑: 受管环境 (PEP 668) 会拒绝 --user 安装，
+    # 只在 Unix 一侧补 --break-system-packages，Windows 没有这个限制。
+    py = "python" if os.name == "nt" else "python3"
+    extra = "" if os.name == "nt" else " --break-system-packages"
     sys.stderr.write(
         "[ccs] 提示: 未检测到 prompt_toolkit，交互界面已降级为编号输入模式（没有上下键菜单）。\n"
         "[ccs]       安装后即可恢复上下键 + 模糊搜索菜单:\n"
-        "[ccs]         python3 -m pip install --user prompt_toolkit\n"
+        f"[ccs]         {py} -m pip install --user{extra} prompt_toolkit\n"
     )
 
 
@@ -154,6 +158,9 @@ def pick_mode_interactive(default_mode):
         from prompt_toolkit.shortcuts import radiolist_dialog
     except ImportError:
         warn_degraded()
+        radiolist_dialog = None
+    except Exception:
+        # 库装了但坏了（安装不完整等），同样退回编号输入
         radiolist_dialog = None
 
     if radiolist_dialog is not None:
@@ -223,6 +230,9 @@ def pick_interactive(providers):
         from prompt_toolkit.widgets import SearchToolbar
     except ImportError:
         warn_degraded()
+        return pick_simple(providers)
+    except Exception:
+        # 库装了但坏了（安装不完整等），同样退回编号输入
         return pick_simple(providers)
 
     # 光标初始停在 cc-switch 正在使用的配置上
