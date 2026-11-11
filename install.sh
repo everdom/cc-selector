@@ -11,6 +11,7 @@
 set -e
 
 REPO_RAW="https://raw.githubusercontent.com/everdom/cc-selector/main"
+REPO_PATH="everdom/cc-selector"
 INSTALL_DIR="$HOME/.local/bin"
 SHARE_DIR="$HOME/.local/share/ccs"
 
@@ -27,6 +28,39 @@ case "${BASH_SOURCE[0]:-$0}" in
         ;;
 esac
 
+# 从 GitHub 取单个文件。
+#
+# raw.githubusercontent.com 走 CDN 缓存（cache-control: max-age=300），刚 push
+# 的内容最多 5 分钟才对所有人可见，而且不同边缘节点状态不一致: 有的返回
+# 404，有的返回旧版。所以优先用 contents API（直接读仓库，不吃 raw 的
+# 缓存），raw 只作兜底。API 匿名调用有 60 次/小时限制，超了正好回退 raw。
+download_from_github() {
+    local name="$1" dest="$2"
+    if command -v curl >/dev/null 2>&1; then
+        if curl -fsSL -H "Accept: application/vnd.github.raw" \
+            "https://api.github.com/repos/$REPO_PATH/contents/$name?ref=main" \
+            -o "$dest" 2>/dev/null && [ -s "$dest" ]; then
+            return 0
+        fi
+        if curl -fsSL "$REPO_RAW/$name" -o "$dest" 2>/dev/null && [ -s "$dest" ]; then
+            return 0
+        fi
+    elif command -v wget >/dev/null 2>&1; then
+        if wget -qO "$dest" \
+            --header="Accept: application/vnd.github.raw" \
+            "https://api.github.com/repos/$REPO_PATH/contents/$name?ref=main" 2>/dev/null \
+            && [ -s "$dest" ]; then
+            return 0
+        fi
+        if wget -qO "$dest" "$REPO_RAW/$name" 2>/dev/null && [ -s "$dest" ]; then
+            return 0
+        fi
+    else
+        echo "[ccs] 错误: 需要 curl 或 wget" >&2
+    fi
+    return 1
+}
+
 # 取得 repo 内文件的路径；repo 不可用时从 GitHub 下载。
 # 结果放在 FETCH_PATH，FETCH_TEMP 标明它是不是需要清理的临时文件。
 # 不用 $(...) 取值是因为在子 shell 里设置的变量传不回来。
@@ -42,12 +76,9 @@ fetch_file() {
     fi
     tmp="$(mktemp)"
     echo "[ccs] 从 GitHub 下载 $name ..." >&2
-    if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$REPO_RAW/$name" -o "$tmp" || { rm -f "$tmp"; exit 1; }
-    elif command -v wget >/dev/null 2>&1; then
-        wget -qO "$tmp" "$REPO_RAW/$name" || { rm -f "$tmp"; exit 1; }
-    else
-        echo "[ccs] 错误: 需要 curl 或 wget" >&2
+    if ! download_from_github "$name" "$tmp"; then
+        rm -f "$tmp"
+        echo "[ccs] 错误: 下载 $name 失败" >&2
         exit 1
     fi
     FETCH_PATH="$tmp"

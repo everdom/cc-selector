@@ -10,6 +10,7 @@
 $ErrorActionPreference = "Stop"
 
 $RepoRaw = "https://raw.githubusercontent.com/everdom/cc-selector/main"
+$RepoPath = "everdom/cc-selector"
 $InstallDir = "$env:LOCALAPPDATA\Programs\ccs"
 
 # 检测安装来源: -File 运行时脚本在磁盘上，可直接复制本地文件；
@@ -24,12 +25,22 @@ function Get-SourceFile([string]$Name) {
     }
     $tmp = Join-Path $env:TEMP "$Name.$PID.tmp"
     Write-Host "[ccs] 从 GitHub 下载 $Name ..."
+    # 优先用 contents API: raw.githubusercontent.com 走 CDN 缓存
+    # (cache-control: max-age=300)，刚 push 的内容最多 5 分钟才对所有人可见，
+    # 而且不同边缘节点状态不一致（有的 404、有的返回旧版）。API 直接读仓库。
     try {
-        Invoke-WebRequest -Uri "$RepoRaw/$Name" -OutFile $tmp -UseBasicParsing
+        Invoke-WebRequest -Uri "https://api.github.com/repos/$RepoPath/contents/$Name?ref=main" `
+            -Headers @{ Accept = "application/vnd.github.raw" } `
+            -OutFile $tmp -UseBasicParsing
     } catch {
-        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
-        Write-Host "[ccs] 错误: 下载 $Name 失败: $_" -ForegroundColor Red
-        exit 1
+        # API 匿名调用有 60 次/小时限制，超了退回 raw
+        try {
+            Invoke-WebRequest -Uri "$RepoRaw/$Name" -OutFile $tmp -UseBasicParsing
+        } catch {
+            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+            Write-Host "[ccs] 错误: 下载 $Name 失败: $_" -ForegroundColor Red
+            exit 1
+        }
     }
     return $tmp
 }
